@@ -1,5 +1,10 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
-import { getDefaultLocation, isKnownLocation } from '@/services/airQualityService'
+
+import {
+  getDefaultLocation,
+  isKnownLocation,
+} from '@/services/airQualityService'
+
 import type { LocationOption } from '@/types/airQuality'
 
 const KEY = 'aire-location'
@@ -14,33 +19,66 @@ const LocationContext = createContext<LocationCtx | null>(null)
 function readStored(): LocationOption | null {
   try {
     const raw = localStorage.getItem(KEY)
+
     if (raw) {
       const p = JSON.parse(raw)
-      if (p && typeof p.id === 'string' && typeof p.name === 'string' && isKnownLocation(p.id)) return p as LocationOption
+
+      if (
+        p &&
+        typeof p.id === 'string' &&
+        typeof p.name === 'string' &&
+        isKnownLocation(p.id)
+      ) {
+        return p as LocationOption
+      }
     }
-  } catch { /* storage unavailable or corrupted */ }
+  } catch {
+    /* storage unavailable or corrupted */
+  }
+
   return getDefaultLocation()
 }
 
-/** The selected location drives every data-backed page, so it lives above the router. */
+/**
+ * The selected location drives every data-backed page,
+ * so it lives above the router.
+ */
 export function LocationProvider({ children }: { children: ReactNode }) {
-  const [location, setLocationState] = useState<LocationOption | null>(readStored)
+  const [location, setLocationState] =
+    useState<LocationOption | null>(readStored)
 
   const value = useMemo<LocationCtx>(
     () => ({
       location,
+
       setLocation: (l) => {
         setLocationState(l)
-        try { localStorage.setItem(KEY, JSON.stringify(l)) } catch { /* ignore */ }
+
+        try {
+          localStorage.setItem(KEY, JSON.stringify(l))
+        } catch {
+          /* ignore */
+        }
       },
     }),
     [location],
   )
-  return <LocationContext.Provider value={value}>{children}</LocationContext.Provider>
+
+  return (
+    <LocationContext.Provider value={value}>
+      {children}
+    </LocationContext.Provider>
+  )
 }
 
 export function useSelectedLocation() {
   const ctx = useContext(LocationContext)
-  if (!ctx) throw new Error('useSelectedLocation must be used inside LocationProvider')
+
+  if (!ctx) {
+    throw new Error(
+      'useSelectedLocation must be used inside LocationProvider',
+    )
+  }
+
   return ctx
 }
