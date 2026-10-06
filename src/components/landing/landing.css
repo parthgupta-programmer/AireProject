@@ -1,0 +1,182 @@
+/* Landing page styles. Everything is scoped under .lp-root or prefixed lp-, so the app itself is untouched.
+   Colours come from the app's theme tokens, so light and dark mode work automatically. */
+
+@property --lp-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+html:has(.lp-root) {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5.5rem;
+}
+
+.lp-root {
+  position: relative;
+  isolation: isolate;
+  overflow-x: clip;
+  min-height: 100dvh;
+  background: hsl(var(--background));
+}
+.lp-display {
+  font-family: 'Bricolage Grotesque', 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  font-optical-sizing: auto;
+  letter-spacing: -0.03em;
+}
+
+/* ---------- page transitions ----------
+   Opacity only: a transform or filter on the root would turn it into the containing block for the fixed nav. */
+.lp-enter { animation: lp-enter 0.6s ease backwards; }
+.lp-root.lp-leaving { opacity: 0; transition: opacity 0.3s ease; }
+@keyframes lp-enter { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------- backgrounds ---------- */
+.lp-mesh {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 8% -5%, hsl(var(--primary) / 0.16), transparent 60%),
+    radial-gradient(50rem 36rem at 95% 8%, hsl(var(--ring) / 0.14), transparent 60%),
+    radial-gradient(46rem 34rem at 70% 105%, hsl(var(--aqi-moderate) / 0.10), transparent 60%),
+    radial-gradient(40rem 30rem at 0% 90%, hsl(var(--aqi-poor) / 0.08), transparent 60%);
+}
+.lp-grain {
+  position: fixed; inset: 0; z-index: 55; pointer-events: none; opacity: 0.05; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+.dark .lp-grain { opacity: 0.07; }
+.lp-dots {
+  background-image: radial-gradient(hsl(var(--foreground) / 0.16) 1px, transparent 1.2px);
+  background-size: 24px 24px;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 40%, #000 20%, transparent 72%);
+  mask-image: radial-gradient(ellipse at 50% 40%, #000 20%, transparent 72%);
+}
+.lp-lines {
+  background-image: linear-gradient(hsl(var(--foreground) / 0.06) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--foreground) / 0.06) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 50%, #000 10%, transparent 70%);
+  mask-image: radial-gradient(ellipse at 50% 50%, #000 10%, transparent 70%);
+}
+.lp-blob { position: absolute; border-radius: 9999px; filter: blur(70px); opacity: 0.5; will-change: transform; animation: lp-drift 18s ease-in-out infinite alternate; }
+.dark .lp-blob { opacity: 0.34; }
+@keyframes lp-drift { from { transform: translate3d(0, 0, 0) scale(1); } to { transform: translate3d(40px, -30px, 0) scale(1.15); } }
+
+/* ---------- surfaces ---------- */
+.lp-glass {
+  background: hsl(var(--card) / 0.55);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  backdrop-filter: blur(18px) saturate(1.5);
+  border: 1px solid hsl(var(--foreground) / 0.1);
+  box-shadow: 0 1px 0 hsl(0 0% 100% / 0.35) inset, 0 20px 50px -24px hsl(var(--foreground) / 0.35);
+}
+.dark .lp-glass { box-shadow: 0 1px 0 hsl(0 0% 100% / 0.06) inset, 0 20px 50px -24px hsl(0 0% 0% / 0.8); }
+.lp-neu {
+  background: hsl(var(--background));
+  border-radius: 1.25rem;
+  box-shadow: 9px 9px 20px hsl(var(--foreground) / 0.09), -9px -9px 20px hsl(0 0% 100% / 0.85);
+}
+.dark .lp-neu { box-shadow: 9px 9px 20px hsl(0 0% 0% / 0.5), -7px -7px 16px hsl(var(--foreground) / 0.045); }
+.lp-neu-in {
+  background: hsl(var(--background));
+  box-shadow: inset 5px 5px 10px hsl(var(--foreground) / 0.1), inset -5px -5px 10px hsl(0 0% 100% / 0.8);
+}
+.dark .lp-neu-in { box-shadow: inset 5px 5px 10px hsl(0 0% 0% / 0.55), inset -4px -4px 9px hsl(var(--foreground) / 0.045); }
+.lp-glow { box-shadow: 0 0 0 1px hsl(var(--primary) / 0.35), 0 12px 44px -10px hsl(var(--primary) / 0.55); }
+
+/* spotlight card: a soft light follows the pointer (set by script via --mx / --my) */
+.lp-spot { position: relative; overflow: hidden; transition: transform 0.35s ease, box-shadow 0.35s ease, border-color 0.35s ease; }
+.lp-spot::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.3s ease;
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 50%), hsl(var(--primary) / 0.16), transparent 60%);
+}
+.lp-spot:hover::before { opacity: 1; }
+.lp-lift:hover { transform: translateY(-6px); box-shadow: 0 28px 60px -28px hsl(var(--foreground) / 0.45); border-color: hsl(var(--primary) / 0.4); }
+
+/* animated gradient border (conic, rotates) */
+.lp-border { position: relative; }
+.lp-border::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1.5px; pointer-events: none;
+  background: conic-gradient(from var(--lp-angle), transparent 55%, hsl(var(--primary)), hsl(var(--aqi-moderate)), hsl(var(--aqi-poor)), transparent);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: lp-spin-angle 6s linear infinite;
+}
+@keyframes lp-spin-angle { to { --lp-angle: 360deg; } }
+
+/* ---------- text & buttons ---------- */
+.lp-gradient-text {
+  background: linear-gradient(100deg, hsl(var(--primary)), hsl(var(--ring)) 30%, hsl(var(--aqi-moderate)) 60%, hsl(var(--aqi-poor)) 80%, hsl(var(--primary)));
+  background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: lp-gradient 8s linear infinite;
+}
+@keyframes lp-gradient { to { background-position: 220% 0; } }
+.lp-underline { background: linear-gradient(currentColor, currentColor) 0 100% / 0 1.5px no-repeat; transition: background-size 0.35s ease; }
+.lp-underline:hover, .lp-underline:focus-visible { background-size: 100% 1.5px; }
+
+.lp-btn { position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; border-radius: 9999px; font-weight: 600; white-space: nowrap; transition: box-shadow 0.3s ease, background-color 0.3s ease, border-color 0.3s ease; will-change: transform; }
+.lp-btn-primary { color: hsl(var(--primary-foreground)); background: linear-gradient(120deg, hsl(var(--primary)), hsl(var(--ring))); box-shadow: 0 10px 30px -10px hsl(var(--primary) / 0.7); }
+.lp-btn-primary:hover { box-shadow: 0 14px 44px -8px hsl(var(--primary) / 0.85); }
+.lp-btn-primary::after { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, hsl(0 0% 100% / 0.35) 50%, transparent 70%); transform: translateX(-120%); animation: lp-shimmer 3.6s ease-in-out infinite; }
+@keyframes lp-shimmer { 0%, 55% { transform: translateX(-120%); } 100% { transform: translateX(120%); } }
+.lp-btn-ghost { color: hsl(var(--foreground)); border: 1px solid hsl(var(--foreground) / 0.18); background: hsl(var(--card) / 0.5); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.lp-btn-ghost:hover { border-color: hsl(var(--primary) / 0.6); background: hsl(var(--accent) / 0.8); }
+.lp-ripple { position: absolute; border-radius: 9999px; pointer-events: none; background: hsl(0 0% 100% / 0.45); transform: scale(0); animation: lp-ripple 0.65s ease-out forwards; }
+@keyframes lp-ripple { to { transform: scale(1); opacity: 0; } }
+
+.lp-skeleton { position: relative; overflow: hidden; background: hsl(var(--muted)); border-radius: 0.5rem; }
+.lp-skeleton::after { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, hsl(var(--foreground) / 0.08) 50%, transparent 70%); transform: translateX(-100%); animation: lp-shimmer 1.6s linear infinite; }
+
+/* ---------- ambient motion (transform / opacity only) ---------- */
+.lp-float { animation: lp-float 6s ease-in-out infinite; }
+.lp-float-slow { animation: lp-float 9s ease-in-out infinite reverse; }
+@keyframes lp-float { 0%, 100% { transform: translate3d(0, 0, 0); } 50% { transform: translate3d(0, -14px, 0); } }
+.lp-bounce { animation: lp-bounce 1.8s ease-in-out infinite; }
+@keyframes lp-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(8px); } }
+.lp-ping { animation: lp-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; }
+@keyframes lp-ping { 75%, 100% { transform: scale(2.4); opacity: 0; } }
+.lp-spin-slow { animation: lp-rotate 40s linear infinite; }
+@keyframes lp-rotate { to { transform: rotate(360deg); } }
+.lp-glow-pulse { animation: lp-glow 3s ease-in-out infinite; }
+@keyframes lp-glow { 0%, 100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.45); } 50% { box-shadow: 0 0 0 14px hsl(var(--primary) / 0); } }
+
+.lp-marquee { display: flex; width: max-content; animation: lp-marquee 70s linear infinite; }
+.lp-marquee:hover { animation-play-state: paused; }
+@keyframes lp-marquee { to { transform: translate3d(-50%, 0, 0); } }
+
+/* ---------- 3D ---------- */
+.lp-flip { perspective: 1100px; }
+.lp-flip-inner { position: relative; transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1); transform-style: preserve-3d; }
+.lp-flip[data-flipped='true'] .lp-flip-inner { transform: rotateY(180deg); }
+@media (hover: hover) { .lp-flip:hover .lp-flip-inner { transform: rotateY(180deg); } .lp-flip[data-flipped='true']:hover .lp-flip-inner { transform: none; } }
+.lp-face { position: absolute; inset: 0; -webkit-backface-visibility: hidden; backface-visibility: hidden; }
+.lp-face-back { transform: rotateY(180deg); }
+
+.lp-scene { perspective: 1000px; }
+.lp-orb { position: relative; transform-style: preserve-3d; }
+.lp-orb-core { position: absolute; inset: 22%; border-radius: 9999px; background: radial-gradient(circle at 32% 28%, hsl(var(--aqi-moderate)), hsl(var(--primary)) 55%, hsl(var(--aqi-severe) / 0.9)); box-shadow: 0 0 80px 10px hsl(var(--primary) / 0.45), inset -18px -22px 40px hsl(0 0% 0% / 0.35); }
+.lp-orb-ring { position: absolute; inset: 0; border-radius: 9999px; border: 2px solid hsl(var(--primary) / 0.55); }
+
+/* ---------- range slider ---------- */
+.lp-range { -webkit-appearance: none; appearance: none; width: 100%; height: 14px; border-radius: 9999px; outline-offset: 6px; background: linear-gradient(90deg, hsl(var(--aqi-good)), hsl(var(--aqi-moderate)) 25%, hsl(var(--aqi-poor)) 50%, hsl(var(--aqi-very-poor)) 75%, hsl(var(--aqi-severe))); box-shadow: inset 2px 2px 5px hsl(0 0% 0% / 0.25); }
+.lp-range::-webkit-slider-thumb { -webkit-appearance: none; width: 30px; height: 30px; border-radius: 9999px; background: hsl(var(--card)); border: 3px solid hsl(var(--foreground)); box-shadow: 0 6px 18px hsl(0 0% 0% / 0.35); cursor: grab; transition: transform 0.15s ease; }
+.lp-range::-moz-range-thumb { width: 24px; height: 24px; border-radius: 9999px; background: hsl(var(--card)); border: 3px solid hsl(var(--foreground)); box-shadow: 0 6px 18px hsl(0 0% 0% / 0.35); cursor: grab; }
+.lp-range:active::-webkit-slider-thumb { transform: scale(1.15); cursor: grabbing; }
+
+/* ---------- custom cursor ---------- */
+.lp-cursor-ring { width: 38px; height: 38px; margin: -19px 0 0 -19px; border-radius: 9999px; border: 1.5px solid hsl(var(--primary)); transition: width 0.25s ease, height 0.25s ease, margin 0.25s ease, background-color 0.25s ease, opacity 0.25s ease; }
+.lp-cursor-ring[data-hover='true'] { width: 64px; height: 64px; margin: -32px 0 0 -32px; background: hsl(var(--primary) / 0.12); }
+.lp-cursor-dot { width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 9999px; background: hsl(var(--primary)); }
+
+/* ---------- misc ---------- */
+.lp-skip { position: fixed; left: 1rem; top: -4rem; z-index: 100; padding: 0.6rem 1rem; border-radius: 9999px; background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-weight: 600; transition: top 0.2s ease; }
+.lp-skip:focus { top: 1rem; }
+.lp-hscroll::-webkit-scrollbar { display: none; }
+.lp-hscroll { scrollbar-width: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-blob, .lp-float, .lp-float-slow, .lp-bounce, .lp-ping, .lp-spin-slow, .lp-glow-pulse, .lp-marquee,
+  .lp-gradient-text, .lp-btn-primary::after, .lp-border::after, .lp-skeleton::after, .lp-enter { animation: none !important; }
+  .lp-marquee { overflow-x: auto; }
+  .lp-root.lp-leaving { transition: none; }
+  .lp-flip-inner { transition: none; }
+}
