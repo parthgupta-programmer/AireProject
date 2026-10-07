@@ -8,11 +8,10 @@ dist
 ml_pipeline/data/raw/
 ml_pipeline/data/combined.csv
 ml_pipeline/data/features.csv
-ml_pipeline/models/*.joblib
 ml_pipeline/models/plots/
 
 # Python
 __pycache__/
 *.py[cod]
 .venv/
-*.egg-info/
+*.egg-info/
