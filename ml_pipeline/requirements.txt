@@ -1,0 +1,23 @@
+# ── Core ML ──────────────────────────────────────────────────────────────────
+scikit-learn>=1.4.0
+xgboost>=2.0.0
+optuna>=3.6.0              # Hyperparameter fine-tuning
+shap>=0.45.0               # Feature importance / explainability
+greenlet<3.1               # Binary wheel for Python 3.9 on Windows (avoids MSVC compile)
+
+# ── Data handling ─────────────────────────────────────────────────────────────
+pandas>=2.1.0
+numpy>=1.26.0
+requests>=2.31.0
+pytz>=2024.1
+
+# ── Serving (FastAPI backend) ─────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.0
+
+# ── Persistence ───────────────────────────────────────────────────────────────
+joblib>=1.4.0              # Save / load model artefacts
+
+# ── Evaluation & logging ──────────────────────────────────────────────────────
+matplotlib>=3.8.0          # Plots saved as PNG artefacts

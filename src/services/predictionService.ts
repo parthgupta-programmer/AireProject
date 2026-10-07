@@ -1,15 +1,69 @@
 /**
- * Prediction service (MOCK ML backend).
+ * predictionService.ts
+ * ─────────────────────
+ * Connects the React UI to the trained XGBoost ML backend (serve.py).
  *
- * To connect the real model: keep `getPrediction`, replace the body with a fetch() to your backend and map the
- * response to `AqiPrediction`. Return `null` when the model has no estimate for the location.
+ * Backend URL is read from VITE_ML_BACKEND_URL (default: http://localhost:8000).
+ * Set it in your .env file:
+ *   VITE_ML_BACKEND_URL=http://localhost:8000
  *
- * The mock builds a plausible hourly forecast from the same underlying data the dashboard uses, adds an
- * uncertainty band that widens with time, and lets confidence fall as the horizon grows.
+ * Falls back to the mock automatically when:
+ *   • The environment variable is not set (development without the backend)
+ *   • The backend returns a non-2xx response
+ *   • The backend is unreachable (network error)
  */
+
+import type { AqiPrediction } from '@/types/prediction'
+
+// ── Configuration ──────────────────────────────────────────────────────────────
+
+/**
+ * URL of the FastAPI prediction server started with:
+ *   uvicorn ml_pipeline.serve:app --reload --port 8000
+ *
+ * Leave empty (or unset VITE_ML_BACKEND_URL) to use the built-in mock.
+ */
+const BACKEND_URL: string =
+  (import.meta.env.VITE_ML_BACKEND_URL as string | undefined) ?? ''
+
+const USE_REAL_BACKEND = BACKEND_URL.length > 0
+
+// ── Real backend call ──────────────────────────────────────────────────────────
+
+async function fetchFromBackend(
+  locationId: string,
+): Promise<AqiPrediction | null> {
+  const url = `${BACKEND_URL.replace(/\/$/, '')}/predict/${locationId}`
+
+  const resp = await fetch(url, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(10_000), // 10 s timeout
+  })
+
+  if (resp.status === 404) {
+    // City not in model registry → no prediction available
+    return null
+  }
+
+  if (!resp.ok) {
+    throw new Error(
+      `ML backend returned ${resp.status} for city "${locationId}"`,
+    )
+  }
+
+  return (await resp.json()) as AqiPrediction
+}
+
+// ── Mock fallback (preserved from original) ────────────────────────────────────
+
 import { mockDataForPrediction } from './airQualityService'
-import { FLAG, MockRequestError, rand01, simulateNetwork } from './mock'
-import type { AqiPrediction, PredictionFactor, PredictionHorizon, PredictionPoint } from '@/types/prediction'
+import {
+  FLAG,
+  MockRequestError,
+  rand01,
+  simulateNetwork,
+} from './mock'
+import type { PredictionFactor, PredictionHorizon, PredictionPoint } from '@/types/prediction'
 
 const HOUR = 3_600_000
 const MAX_HOURS = 24
@@ -42,8 +96,10 @@ function factorsFor(delta: number): PredictionFactor[] {
   ]
 }
 
-export async function getPrediction(locationId: string): Promise<AqiPrediction | null> {
-  await simulateNetwork(500) // models are slower than a plain lookup
+async function getMockPrediction(
+  locationId: string,
+): Promise<AqiPrediction | null> {
+  await simulateNetwork(500)
   if (FLAG === 'predicterror') throw new MockRequestError('Mock prediction failed')
   if (FLAG === 'nopredict') return null
 
@@ -54,15 +110,18 @@ export async function getPrediction(locationId: string): Promise<AqiPrediction |
 
   const seed = Math.floor(anchor / HOUR) + locationId.length * 131
 
-  const series: PredictionPoint[] = Array.from({ length: MAX_HOURS + 1 }, (_, h) => {
-    const t = anchor + h * HOUR
-    if (h === 0) return { timestamp: new Date(t).toISOString(), aqi: current, low: current, high: current }
-    const truth = (mockDataForPrediction.aqiAt(locationId, t) ?? current) * (1 + 0.05 * (rand01(seed + h * 53) * 2 - 1))
-    const blend = Math.min(1, h / 3) // start from what we measure, drift toward the model's view
-    const aqi = round(current * (1 - blend) + truth * blend)
-    const half = aqi * (0.05 + 0.011 * h)
-    return { timestamp: new Date(t).toISOString(), aqi, low: round(aqi - half), high: round(aqi + half) }
-  })
+  const series: PredictionPoint[] = Array.from(
+    { length: MAX_HOURS + 1 },
+    (_, h) => {
+      const t = anchor + h * HOUR
+      if (h === 0) return { timestamp: new Date(t).toISOString(), aqi: current, low: current, high: current }
+      const truth = (mockDataForPrediction.aqiAt(locationId, t) ?? current) * (1 + 0.05 * (rand01(seed + h * 53) * 2 - 1))
+      const blend = Math.min(1, h / 3)
+      const aqi = round(current * (1 - blend) + truth * blend)
+      const half = aqi * (0.05 + 0.011 * h)
+      return { timestamp: new Date(t).toISOString(), aqi, low: round(aqi - half), high: round(aqi + half) }
+    },
+  )
 
   const horizons: PredictionHorizon[] = HORIZON_HOURS.map((hours) => {
     const p = series[hours]
@@ -93,4 +152,30 @@ export async function getPrediction(locationId: string): Promise<AqiPrediction |
     factors: FLAG === 'nofactors' ? [] : factorsFor(sixHourDelta),
     insight,
   }
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────────
+
+/**
+ * Returns the AQI prediction for a given location.
+ *
+ * • When VITE_ML_BACKEND_URL is set, calls the real FastAPI server.
+ * • Falls back to the mock on any network/server error so the UI never breaks.
+ */
+export async function getPrediction(
+  locationId: string,
+): Promise<AqiPrediction | null> {
+  if (USE_REAL_BACKEND) {
+    try {
+      return await fetchFromBackend(locationId)
+    } catch (err) {
+      console.warn(
+        '[predictionService] Real backend failed, falling back to mock:',
+        err,
+      )
+      // Fall through to mock
+    }
+  }
+
+  return getMockPrediction(locationId)
 }
