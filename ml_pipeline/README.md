@@ -21,8 +21,7 @@ ml_pipeline/
     ├── model_6h.joblib
     ├── model_12h.joblib
     ├── model_24h.joblib
-    ├── scaler.joblib      ← StandardScaler fitted on training data
-    ├── feature_names.json ← Ordered list of features (same order at train+serve)
+    ├── feature_names.json ← Ordered feature list PER horizon (same order at train+serve)
     ├── metrics.json       ← Training metrics (MAE, RMSE, R²) per horizon
     └── plots/             ← Feature importance, SHAP, residual, actual-vs-pred
 ```
@@ -78,7 +77,7 @@ python ml_pipeline/collect_data.py
 
 **What it does:**
 - Finds the nearest OpenAQ station for each city in `CITIES` list
-- Downloads up to 90 days of hourly pollutant measurements (PM2.5, PM10, NO2, SO2, CO, O3)
+- Downloads up to 730 days (`DAYS_BACK`) of hourly pollutant measurements (PM2.5, PM10, NO2, SO2, CO, O3)
 - Downloads matching hourly meteorology from Open-Meteo (wind, temp, humidity, BLH, pressure)
 - Computes India CPCB AQI from the pollutant sub-index formula
 - Saves one CSV per city → `ml_pipeline/data/raw/<city_id>.csv`
@@ -104,15 +103,16 @@ python ml_pipeline/feature_engineering.py
 ```
 
 **What it does:**
-- Reads `combined.csv`
-- Creates features:
+- Reads `combined.csv`, puts each city on a strict hourly grid (short gaps interpolated)
+- Creates features (all causal - nothing after time *t* is used):
   | Group | Features |
   |-------|---------|
   | Temporal | `hour_sin/cos`, `dow_sin/cos`, `month_sin/cos`, `is_weekend` |
-  | Auto-regressive AQI | `aqi_lag_1h` … `aqi_lag_24h`, rolling means 3h/6h/12h/24h |
-  | Lagged pollutants | `pm25_lag1`, `pm10_lag1`, `no2_lag1`, `o3_lag1` |
-  | Meteorological | wind, temp, humidity, pressure, boundary-layer height |
-  | Interaction | `pm25_x_wind`, `temp_x_o3` |
+  | Static | `lat`, `lon` |
+  | AQI history | `aqi_lag_0h` (**current AQI**), lags 1-48h, rolling mean 3h-168h, rolling std/max/min, trends `aqi_d1/d3/d6/d24` |
+  | Pollutants | current PM2.5/PM10/NO2/SO2/CO/O3, lags, PM2.5/PM10 ratio |
+  | Meteorological | wind, temp, humidity, pressure, BLH, pressure/temp trends, 24h rain, ventilation index |
+  | Future weather | per horizon *h*: weather at *t+h* and mean/sum over (*t*, *t+h*] (from the forecast API at serve time) |
   | Target (5 columns) | `aqi_next_1h`, `_3h`, `_6h`, `_12h`, `_24h` |
 - Saves → `ml_pipeline/data/features.csv`
 
@@ -125,31 +125,22 @@ python ml_pipeline/train.py
 ```
 
 **What it does:**
-- Splits data **chronologically** (85% train / 15% test — no data leakage)
-- Fits a `StandardScaler` on training features only, saves to `models/scaler.joblib`
+- Splits data **chronologically** (85% train / 15% test, with a 24h purge gap - no leakage)
 - For each horizon (1h, 3h, 6h, 12h, 24h):
-  - Runs **Optuna Bayesian hyperparameter search** (40 trials each, 5-fold `TimeSeriesSplit`)
-  - Fits final XGBoost with best params on full training set
-  - Evaluates on held-out test set (MAE, RMSE, R²)
-  - Generates feature-importance PNG, SHAP beeswarm PNG, residual plots
-  - Saves model to `models/model_<h>h.joblib`
-- Saves metrics summary to `models/metrics.json`
+  - Each model predicts the **change from the current AQI** (delta target); the current AQI is added back
+  - Runs **Optuna Bayesian search** (`N_OPTUNA_TRIALS`, default 40, 4-fold `TimeSeriesSplit` with a gap)
+    using XGBoost **early stopping** to pick the number of trees
+  - Fits the final XGBoost on the full training set (the test set is never used for fitting)
+  - Reports MAE / RMSE / R² on the held-out test set **and the same metrics for a
+    "nothing changes" persistence baseline**, so you can see the real skill of the model
+  - Generates feature-importance, SHAP and residual plots
+- Saves `models/model_<h>h.joblib`, `models/feature_names.json`, `models/metrics.json`
 
-**Expected time:** ~20–60 minutes (40 Optuna trials × 5 folds × 5 horizons).  
-To speed up, reduce `N_OPTUNA_TRIALS` in `train.py` (default 40 → try 15 for a quick test).
+**Expected time:** ~30-90 minutes with the default 40 trials. Use `N_OPTUNA_TRIALS=10` for a quick test.
 
-**Printed output example:**
-```
-════════════════════════════════════════════════════════════
-Horizon      MAE     RMSE       R²   CV MAE
-────────────────────────────────────────────────────────────
-   1h      12.34    18.21   0.9412    13.10
-   3h      18.92    27.45   0.8870    19.88
-   6h      25.11    36.78   0.8321    26.44
-  12h      33.87    48.20   0.7765    35.12
-  24h      42.55    60.33   0.7102    44.00
-════════════════════════════════════════════════════════════
-```
+> If you re-collect data, delete `ml_pipeline/data/raw/` first - existing city files are skipped.
+> Models trained with the previous version of the pipeline are **not compatible** with the new
+> features: re-run Steps 1-3 before starting the API server.
 
 ---
 
@@ -248,7 +239,7 @@ User opens the Aire app
 | Better accuracy | Increase `N_OPTUNA_TRIALS` in `train.py` (40 → 100+) |
 | More cities | Add rows to `CITIES` in `collect_data.py` + `CITY_COORDS` in `serve.py` |
 | Longer forecast | Add `48` or `72` to `HORIZONS` in all scripts |
-| More data | Increase `DAYS_BACK` in `collect_data.py` (90 → 365) |
+| More data | Increase `DAYS_BACK` in `collect_data.py` (default is now 730) |
 | Production deployment | Change `allow_origins=["*"]` in `serve.py` to your frontend URL |
 
 ---

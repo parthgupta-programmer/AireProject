@@ -28,6 +28,11 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
+try:                                    # imported as a package
+    from ml_pipeline.feature_engineering import temporal_split
+except ImportError:                     # run as a script
+    from feature_engineering import temporal_split
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
@@ -39,13 +44,6 @@ PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
 FEATURES_CSV = DATA_DIR / "features.csv"
 HORIZONS = [1, 3, 6, 12, 24]
-TEST_FRACTION = 0.15
-
-
-def temporal_split(df: pd.DataFrame):
-    df = df.sort_values("timestamp").reset_index(drop=True)
-    split = int(len(df) * (1 - TEST_FRACTION))
-    return df.iloc[:split], df.iloc[split:]
 
 
 def main() -> None:
@@ -54,15 +52,10 @@ def main() -> None:
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
 
     with open(MODELS_DIR / "feature_names.json") as f:
-        feature_cols = json.load(f)
+        feature_map = json.load(f)          # {"1": [...], "3": [...], ...}
 
-    scaler = joblib.load(MODELS_DIR / "scaler.joblib")
-
-    _, test_df = temporal_split(df)
+    _, test_df = temporal_split(df, horizon_gap_h=max(HORIZONS))
     log.info("Test set: %d rows", len(test_df))
-
-    X_test_raw = test_df[feature_cols].values
-    X_test = scaler.transform(X_test_raw)
 
     summary = []
     for h in HORIZONS:
@@ -73,13 +66,20 @@ def main() -> None:
             continue
 
         model = joblib.load(model_path)
-        mask = test_df[target].notna()
-        y_true = test_df.loc[mask, target].values
-        preds  = np.clip(model.predict(X_test[mask]), 0, 500)
+        mask = test_df[target].notna() & test_df["aqi_lag_0h"].notna()
+        t = test_df[mask]
+        X = t[feature_map[str(h)]].values.astype(float)
+        y_true = t[target].values
+        now    = t["aqi_lag_0h"].values
+        # models predict the change from the current AQI
+        preds  = np.clip(model.predict(X) + now, 0, 500)
 
         mae  = mean_absolute_error(y_true, preds)
         rmse = np.sqrt(mean_squared_error(y_true, preds))
         r2   = r2_score(y_true, preds)
+        base = np.clip(now, 0, 500)
+        base_mae = mean_absolute_error(y_true, base)
+        base_r2  = r2_score(y_true, base)
 
         # ── Approximate 90% interval using residual std ───────────────────
         residuals = preds - y_true
@@ -89,10 +89,11 @@ def main() -> None:
         coverage = np.mean((y_true >= low) & (y_true <= high))
 
         log.info(
-            "Horizon %2dh -- MAE=%5.2f  RMSE=%5.2f  R2=%6.4f  90%%CI Coverage=%.2f",
-            h, mae, rmse, r2, coverage,
+            "Horizon %2dh -- MAE=%5.2f  RMSE=%5.2f  R2=%6.4f  90%%CI Coverage=%.2f | persistence MAE=%5.2f R2=%6.4f",
+            h, mae, rmse, r2, coverage, base_mae, base_r2,
         )
-        summary.append({"horizon_h": h, "mae": mae, "rmse": rmse, "r2": r2, "coverage_90": coverage})
+        summary.append({"horizon_h": h, "mae": mae, "rmse": rmse, "r2": r2, "coverage_90": coverage,
+                        "persistence_mae": base_mae, "persistence_r2": base_r2})
 
         # ── Actual vs Predicted plot (first 200 test points) ─────────────
         n_plot = min(200, len(y_true))
@@ -118,12 +119,12 @@ def main() -> None:
         json.dump(summary, f, indent=2)
 
     print("\n--- Final Evaluation Summary ---")
-    print(f"{'Horizon':>10} {'MAE':>8} {'RMSE':>8} {'R2':>8} {'90%CI':>8}")
-    print("-" * 50)
+    print(f"{'Horizon':>10} {'MAE':>8} {'RMSE':>8} {'R2':>8} {'90%CI':>8} {'persistR2':>10}")
+    print("-" * 60)
     for m in summary:
         print(
             f"  {m['horizon_h']:>4}h   "
-            f"{m['mae']:>8.2f} {m['rmse']:>8.2f} {m['r2']:>8.4f} {m['coverage_90']:>8.2f}"
+            f"{m['mae']:>8.2f} {m['rmse']:>8.2f} {m['r2']:>8.4f} {m['coverage_90']:>8.2f} {m['persistence_r2']:>10.4f}"
         )
 
 

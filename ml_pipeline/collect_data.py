@@ -38,8 +38,10 @@ import requests
 # Either set the environment variable OPENAQ_API_KEY or paste it here:
 OPENAQ_API_KEY: str = os.getenv("OPENAQ_API_KEY", "")
 
-# How many days of past data to download
-DAYS_BACK: int = 90
+# How many days of past data to download. More history = more seasons seen in
+# training = noticeably better accuracy (2 years covers two full smog seasons).
+# NOTE: existing files in data/raw/ are skipped - delete them to re-download.
+DAYS_BACK: int = 730
 
 # Cities to train on — must match IDs in src/data/indiaLocations.ts
 # Format: (city_id, display_name, latitude, longitude)
@@ -81,7 +83,7 @@ OPENMETEO_AQ_BASE = "https://air-quality-api.open-meteo.com/v1/air-quality"
 # ── OpenAQ helpers ─────────────────────────────────────────────────────────────
 
 def _openaq_headers() -> dict:
-    if OPENAQ_API_KEY == "YOUR_OPENAQ_API_KEY_HERE":
+    if not OPENAQ_API_KEY or OPENAQ_API_KEY == "YOUR_OPENAQ_API_KEY_HERE":
         raise RuntimeError(
             "Please set OPENAQ_API_KEY in your environment or in collect_data.py.\n"
             "Get a free key at: https://docs.openaq.org/using-the-api/api-key"
@@ -134,20 +136,25 @@ def fetch_openaq_measurements(
         if param_name not in POLLUTANT_MAP:
             continue
         sensor_id = s["id"]
-        # Query hourly aggregations for this sensor
+        # Query hourly aggregations for this sensor (paginated - a single page
+        # of 1000 rows is only ~42 days of hourly data)
         try:
-            h_resp = requests.get(
-                f"{OPENAQ_BASE}/sensors/{sensor_id}/hours",
-                params={
-                    "datetime_from": date_from.isoformat(),
-                    "datetime_to": date_to.isoformat(),
-                    "limit": 1000,
-                },
-                headers=_openaq_headers(),
-                timeout=20,
-            )
-            if h_resp.status_code == 200:
-                for row in h_resp.json().get("results", []):
+            for page in range(1, 61):
+                h_resp = requests.get(
+                    f"{OPENAQ_BASE}/sensors/{sensor_id}/hours",
+                    params={
+                        "datetime_from": date_from.isoformat(),
+                        "datetime_to": date_to.isoformat(),
+                        "limit": 1000,
+                        "page": page,
+                    },
+                    headers=_openaq_headers(),
+                    timeout=20,
+                )
+                if h_resp.status_code != 200:
+                    break
+                rows = h_resp.json().get("results", [])
+                for row in rows:
                     t_str = row.get("period", {}).get("datetimeFrom", {}).get("utc")
                     val = row.get("value")
                     if t_str and val is not None and val >= 0:
@@ -156,6 +163,9 @@ def fetch_openaq_measurements(
                             "parameter": param_name,
                             "value": val,
                         })
+                if len(rows) < 1000:
+                    break
+                time.sleep(0.3)
         except Exception:
             pass
 

@@ -14,6 +14,15 @@ API routes
 GET  /predict/{city_id}    → AqiPrediction JSON
 GET  /health               → {"status": "ok", "models_loaded": [...]}
 GET  /metrics              → training metrics from metrics.json
+
+How a prediction is made
+────────────────────────
+1. Pull the last ~8 days of air quality (Open-Meteo Air Quality API) and
+   weather + 2-day forecast (Open-Meteo Forecast API) for the city.
+2. Compute the current AQI with the same CPCB formula used for training.
+3. Build features with feature_engineering.build_features (the SAME code used
+   in training, so there is no train/serve skew).
+4. Each horizon model predicts the *change* in AQI; the current AQI is added back.
 """
 
 from __future__ import annotations
@@ -23,7 +32,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-import math
 
 import joblib
 import numpy as np
@@ -32,6 +40,13 @@ import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+try:                                    # run as a package (uvicorn ml_pipeline.serve:app)
+    from ml_pipeline.collect_data import calc_aqi
+    from ml_pipeline.feature_engineering import build_features
+except ImportError:                     # run from inside ml_pipeline/
+    from collect_data import calc_aqi
+    from feature_engineering import build_features
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -44,25 +59,27 @@ MODELS_DIR = BASE / "models"
 HORIZONS = [1, 3, 6, 12, 24]
 
 models: dict[int, object] = {}
-scaler = None
-feature_cols: list[str] = []
+feature_map: dict[int, list[str]] = {}
 _metrics: list[dict] = []
 
 
 def _load_models() -> None:
-    global scaler, feature_cols, _metrics
+    global _metrics
 
-    scaler_path = MODELS_DIR / "scaler.joblib"
-    fn_path     = MODELS_DIR / "feature_names.json"
+    fn_path      = MODELS_DIR / "feature_names.json"
     metrics_path = MODELS_DIR / "metrics.json"
 
-    if not scaler_path.exists() or not fn_path.exists():
+    if not fn_path.exists():
         log.error("Models not found — run  python ml_pipeline/train.py  first.")
         return
 
-    scaler = joblib.load(scaler_path)
     with open(fn_path) as f:
-        feature_cols = json.load(f)
+        raw = json.load(f)
+    if not isinstance(raw, dict):
+        log.error("feature_names.json is from an older pipeline version — "
+                  "re-run feature_engineering.py and train.py.")
+        return
+    feature_map.update({int(k): v for k, v in raw.items()})
 
     if metrics_path.exists():
         with open(metrics_path) as f:
@@ -70,7 +87,7 @@ def _load_models() -> None:
 
     for h in HORIZONS:
         mp = MODELS_DIR / f"model_{h}h.joblib"
-        if mp.exists():
+        if mp.exists() and h in feature_map:
             models[h] = joblib.load(mp)
             log.info("Loaded model_%dh.joblib", h)
         else:
@@ -79,34 +96,61 @@ def _load_models() -> None:
 
 _load_models()
 
-# ── Open-Meteo live fetcher ────────────────────────────────────────────────────
+# ── Open-Meteo live fetchers ───────────────────────────────────────────────────
 
 OPENMETEO_FORECAST = "https://api.open-meteo.com/v1/forecast"
+OPENMETEO_AQ       = "https://air-quality-api.open-meteo.com/v1/air-quality"
+HISTORY_DAYS = 8      # enough for the 168 h rolling features
+
+MET_VARS = [
+    "temperature_2m", "relative_humidity_2m", "precipitation", "wind_speed_10m",
+    "wind_direction_10m", "surface_pressure", "boundary_layer_height",
+]
 
 
-def fetch_live_meteo(lat: float, lon: float) -> dict:
-    """Fetch the latest & next 24h forecast from Open-Meteo (no key needed)."""
-    resp = requests.get(
+def fetch_live_frame(city_id: str, lat: float, lon: float, now: datetime) -> pd.DataFrame:
+    """
+    Hourly frame in the same schema as combined.csv: past HISTORY_DAYS days of
+    air quality + weather, plus 2 days of forecast weather (no AQ in the future).
+    """
+    met_resp = requests.get(
         OPENMETEO_FORECAST,
         params={
-            "latitude": lat,
-            "longitude": lon,
-            "hourly": ",".join([
-                "temperature_2m",
-                "relative_humidity_2m",
-                "precipitation",
-                "wind_speed_10m",
-                "wind_direction_10m",
-                "surface_pressure",
-                "boundary_layer_height",
-            ]),
-            "forecast_days": 2,
-            "timezone": "UTC",
+            "latitude": lat, "longitude": lon,
+            "hourly": ",".join(MET_VARS),
+            "past_days": HISTORY_DAYS, "forecast_days": 2, "timezone": "UTC",
         },
-        timeout=15,
+        timeout=20,
     )
-    resp.raise_for_status()
-    return resp.json()
+    met_resp.raise_for_status()
+    met = pd.DataFrame(met_resp.json()["hourly"]).rename(columns={"time": "timestamp"})
+    met["timestamp"] = pd.to_datetime(met["timestamp"], utc=True)
+
+    aq_resp = requests.get(
+        OPENMETEO_AQ,
+        params={
+            "latitude": lat, "longitude": lon,
+            "hourly": "pm2_5,pm10,nitrogen_dioxide,sulphur_dioxide,ozone,carbon_monoxide",
+            "past_days": HISTORY_DAYS, "forecast_days": 1, "timezone": "UTC",
+        },
+        timeout=20,
+    )
+    aq_resp.raise_for_status()
+    aq = pd.DataFrame(aq_resp.json()["hourly"]).rename(columns={
+        "time": "timestamp", "pm2_5": "pm25_raw", "pm10": "pm10_raw",
+        "nitrogen_dioxide": "no2_raw", "sulphur_dioxide": "so2_raw",
+        "ozone": "o3_raw", "carbon_monoxide": "co_raw",
+    })
+    aq["timestamp"] = pd.to_datetime(aq["timestamp"], utc=True)
+    aq["co_raw"] = aq["co_raw"] / 1000.0           # ug/m3 -> mg/m3 (as in collect_data.py)
+    aq = aq[aq["timestamp"] <= pd.Timestamp(now)]   # never use modelled "future" AQ as history
+
+    df = met.merge(aq, on="timestamp", how="left")
+    df["aqi"] = df.apply(calc_aqi, axis=1)
+    df["city_id"] = city_id
+    df["lat"] = lat
+    df["lon"] = lon
+    return df
 
 
 # ── City registry — must match src/data/indiaLocations.ts ─────────────────────
@@ -124,82 +168,6 @@ CITY_COORDS: dict[str, tuple[float, float]] = {
     "ahmedabad":   (23.0225,  72.5714),
     # Add more as you train more cities
 }
-
-# ── Feature builder (mirrors feature_engineering.py, single-row version) ──────
-
-def _cyclical(value: float, period: float) -> tuple[float, float]:
-    angle = 2 * math.pi * value / period
-    return math.sin(angle), math.cos(angle)
-
-
-def build_inference_row(
-    now_ts: datetime,
-    recent_aqi: list[float],   # [t-24h, t-23h, …, t-1h, t] — newest last
-    met_now: dict,             # current meteorological values
-) -> dict:
-    """
-    Build a single feature row for inference.
-    `recent_aqi` must have at least 24 values (hours).
-    """
-    if len(recent_aqi) < 24:
-        recent_aqi = ([recent_aqi[0]] * (24 - len(recent_aqi))) + list(recent_aqi)
-
-    h_sin, h_cos = _cyclical(now_ts.hour, 24)
-    d_sin, d_cos = _cyclical(now_ts.weekday(), 7)
-    m_sin, m_cos = _cyclical(now_ts.month, 12)
-
-    ws  = met_now.get("wind_speed", 0) or 0
-    wd  = met_now.get("wind_dir", 0) or 0
-    blh = max(0, met_now.get("blh", 500) or 500)
-    rad = math.radians(wd)
-
-    pm25 = met_now.get("pm25_lag1", recent_aqi[-1] * 0.3)  # crude fallback
-    o3   = met_now.get("o3_lag1", 30)
-    temp = met_now.get("temp_2m", 25)
-
-    aqi_series = recent_aqi  # index 0 = 24h ago, -1 = most recent
-    roll3  = float(np.mean(aqi_series[-3:]))
-    roll6  = float(np.mean(aqi_series[-6:]))
-    roll12 = float(np.mean(aqi_series[-12:]))
-    roll24 = float(np.mean(aqi_series[-24:]))
-
-    row = {
-        "hour_sin": h_sin,   "hour_cos": h_cos,
-        "dow_sin": d_sin,    "dow_cos": d_cos,
-        "month_sin": m_sin,  "month_cos": m_cos,
-        "is_weekend": int(now_ts.weekday() >= 5),
-
-        "aqi_lag_1h":  aqi_series[-1],
-        "aqi_lag_2h":  aqi_series[-2],
-        "aqi_lag_3h":  aqi_series[-3],
-        "aqi_lag_6h":  aqi_series[-6],
-        "aqi_lag_12h": aqi_series[-12],
-        "aqi_lag_24h": aqi_series[-24],
-
-        "aqi_roll3h":  roll3,
-        "aqi_roll6h":  roll6,
-        "aqi_roll12h": roll12,
-        "aqi_roll24h": roll24,
-
-        "pm25_lag1": pm25,
-        "pm10_lag1": pm25 * 1.5,
-        "no2_lag1":  met_now.get("no2_lag1", 40),
-        "o3_lag1":   o3,
-
-        "temp_2m":    temp,
-        "rh":         met_now.get("rh", 60),
-        "precip":     met_now.get("precip", 0),
-        "wind_speed": ws,
-        "wind_u":     ws * math.sin(rad),
-        "wind_v":     ws * math.cos(rad),
-        "pressure":   met_now.get("pressure", 1013),
-        "blh":        blh,
-        "blh_log":    math.log1p(blh),
-
-        "pm25_x_wind": pm25 * ws,
-        "temp_x_o3":   temp * o3,
-    }
-    return row
 
 
 # ── Pydantic models (match TypeScript AqiPrediction type) ─────────────────────
@@ -240,16 +208,26 @@ class AqiPrediction(BaseModel):
 
 # ── Confidence interval helper ─────────────────────────────────────────────────
 
-# Per-horizon std (AQI units) derived from eval metrics — update after evaluate.py
-_HORIZON_STD: dict[int, float] = {1: 18, 3: 28, 6: 38, 12: 50, 24: 60}
+# Fallback per-horizon std (AQI units) used only if metrics.json is missing.
+_FALLBACK_STD: dict[int, float] = {1: 18, 3: 28, 6: 38, 12: 50, 24: 60}
+
+
+def _horizon_std() -> dict[int, float]:
+    """Test-set RMSE per horizon from training (a real error estimate)."""
+    from_metrics = {int(m["horizon_h"]): float(m["rmse"]) for m in _metrics if "rmse" in m}
+    return from_metrics or _FALLBACK_STD
 
 
 def _band(aqi: int, horizon_h: int, z: float = 1.645) -> tuple[int, int]:
-    std = _HORIZON_STD.get(horizon_h, 40)
+    table = _horizon_std()
+    # use the smallest trained horizon that is >= the requested step
+    keys = sorted(table)
+    h = next((k for k in keys if k >= horizon_h), keys[-1])
+    std = table[h]
     return (max(0, int(aqi - z * std)), min(500, int(aqi + z * std)))
 
 
-# ── SHAP-derived static factor explanations ───────────────────────────────────
+# ── Rule-based factor explanations ────────────────────────────────────────────
 
 def _make_factors(row: dict, aqi_trend: float) -> list[PredictionFactor]:
     """Build a short, rule-based explanation from key feature values."""
@@ -293,7 +271,6 @@ def _make_factors(row: dict, aqi_trend: float) -> list[PredictionFactor]:
             detail="Recent fine-particle concentrations are elevated.",
         ))
 
-    # Sort by weight descending, keep top 4
     factors.sort(key=lambda f: f.weight, reverse=True)
     return factors[:4]
 
@@ -303,7 +280,7 @@ def _make_factors(row: dict, aqi_trend: float) -> list[PredictionFactor]:
 app = FastAPI(
     title="AQI Prediction API",
     description="XGBoost model serving predicted India AQI for the Aire app.",
-    version="1.0.0",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -324,6 +301,11 @@ def metrics():
     return _metrics
 
 
+def _num(row: pd.Series, key: str, default: float) -> float:
+    v = row.get(key, np.nan)
+    return default if v is None or pd.isna(v) else float(v)
+
+
 @app.get("/predict/{city_id}", response_model=AqiPrediction)
 def predict(city_id: str):
     if not models:
@@ -336,65 +318,43 @@ def predict(city_id: str):
     lat, lon = coords
     now = datetime.now(tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
 
-    # ── Fetch live meteorology ────────────────────────────────────────────
+    # ── Real recent air quality + weather/forecast → features ─────────────
     try:
-        met_data = fetch_live_meteo(lat, lon)
+        frame = fetch_live_frame(city_id, lat, lon, now)
     except Exception as e:
         raise HTTPException(502, f"Open-Meteo error: {e}")
 
-    hourly = met_data.get("hourly", {})
-    times  = hourly.get("time", [])
-    now_str = now.strftime("%Y-%m-%dT%H:00")
-    try:
-        now_idx = times.index(now_str)
-    except ValueError:
-        now_idx = min(len(times) - 1, 24)
+    feats = build_features(frame, for_inference=True)
+    feats = feats[(feats["timestamp"] <= pd.Timestamp(now)) & feats["aqi_lag_0h"].notna()]
+    if feats.empty:
+        raise HTTPException(502, "No recent air-quality reading available for this city")
+    row = feats.sort_values("timestamp").iloc[-1]
 
-    def _met(key: str, idx: int):
-        vals = hourly.get(key, [])
-        return vals[idx] if idx < len(vals) else None
+    base_ts = row["timestamp"].to_pydatetime()
+    if now - base_ts > timedelta(hours=3):
+        raise HTTPException(502, f"Latest air-quality reading is stale ({base_ts.isoformat()})")
 
-    met_now = {
-        "temp_2m":    _met("temperature_2m",       now_idx),
-        "rh":         _met("relative_humidity_2m",  now_idx),
-        "precip":     _met("precipitation",         now_idx),
-        "wind_speed": _met("wind_speed_10m",         now_idx),
-        "wind_dir":   _met("wind_direction_10m",     now_idx),
-        "pressure":   _met("surface_pressure",       now_idx),
-        "blh":        _met("boundary_layer_height",  now_idx),
-    }
+    aqi_now = float(row["aqi_lag_0h"])
 
-    # ── Build a dummy recent-AQI series from lag feature only ────────────
-    # (In production you'd fetch real AQ history from OpenAQ here.)
-    # We seed it from the 1h model's output to stay self-consistent.
-    base_aqi = 150  # fallback starting point
-    recent_aqi = [base_aqi] * 24  # will be overwritten with model feedback loop
-
-    # ── Run inference for each horizon ────────────────────────────────────
-    series_points: list[PredictionPoint] = []
+    # ── Run inference for each horizon (models predict change vs. now) ────
     horizon_results: dict[int, int] = {}
-
-    # First point = current (lag 1h is our best guess of "now")
-    current_row = build_inference_row(now, recent_aqi, met_now)
-    feature_vec = np.array([[current_row.get(c, 0) for c in feature_cols]])
-    scaled_vec  = scaler.transform(feature_vec)
-
-    series_points.append(PredictionPoint(
-        timestamp=now.isoformat(),
-        aqi=int(np.clip(recent_aqi[-1], 0, 500)),
-    ))
-
     for h in HORIZONS:
         if h not in models:
             continue
-        pred_raw = float(models[h].predict(scaled_vec)[0])
-        pred_aqi = int(np.clip(pred_raw, 0, 500))
-        horizon_results[h] = pred_aqi
+        x = np.array([[_num(row, c, np.nan) for c in feature_map[h]]], dtype=float)
+        pred_raw = float(models[h].predict(x)[0]) + aqi_now
+        horizon_results[h] = int(np.clip(pred_raw, 0, 500))
+
+    if not horizon_results:
+        raise HTTPException(503, "No horizon models available")
+
+    series_points: list[PredictionPoint] = [
+        PredictionPoint(timestamp=base_ts.isoformat(), aqi=int(np.clip(aqi_now, 0, 500)))
+    ]
 
     # Build full 24-point series interpolating between known horizons
     horizon_set = sorted(horizon_results.keys())
     for step in range(1, 25):
-        # Find bracketing horizons
         lo_h = max((h for h in horizon_set if h <= step), default=horizon_set[0])
         hi_h = min((h for h in horizon_set if h >= step), default=horizon_set[-1])
         if lo_h == hi_h:
@@ -405,7 +365,7 @@ def predict(city_id: str):
             t = (step - lo_h) / (hi_h - lo_h)
             aqi = int(np.clip(lo_v + t * (hi_v - lo_v), 0, 500))
 
-        ts = (now + timedelta(hours=step)).isoformat()
+        ts = (base_ts + timedelta(hours=step)).isoformat()
         low, high = _band(aqi, step)
         series_points.append(PredictionPoint(timestamp=ts, aqi=aqi, low=low, high=high))
 
@@ -416,11 +376,10 @@ def predict(city_id: str):
             continue
         aqi = horizon_results[h]
         low, high = _band(aqi, h)
-        # Confidence falls with horizon: 0.93 → 0.50
         confidence = round(max(0.50, 0.93 - 0.018 * h), 2)
         horizons_out.append(PredictionHorizon(
             hours=h,
-            targetTime=(now + timedelta(hours=h)).isoformat(),
+            targetTime=(base_ts + timedelta(hours=h)).isoformat(),
             aqi=aqi,
             low=low,
             high=high,
@@ -428,8 +387,8 @@ def predict(city_id: str):
         ))
 
     # ── Insight text ──────────────────────────────────────────────────────
-    six_h_aqi = horizon_results.get(6, horizon_results.get(3, recent_aqi[-1]))
-    delta = six_h_aqi - recent_aqi[-1]
+    six_h_aqi = horizon_results.get(6, horizon_results.get(3, aqi_now))
+    delta = six_h_aqi - aqi_now
     if delta > 10:
         insight = "AQI is predicted to rise over the next 6 hours -- consider limiting outdoor activity."
     elif delta < -10:
@@ -437,12 +396,19 @@ def predict(city_id: str):
     else:
         insight = "AQI is predicted to remain relatively stable in the near term."
 
+    factor_inputs = {
+        "wind_speed": _num(row, "wind_speed", 2.0),
+        "blh":        _num(row, "blh", 500.0),
+        "precip":     _num(row, "precip", 0.0),
+        "pm25_lag1":  _num(row, "pm25_now", 60.0),
+    }
+
     return AqiPrediction(
         locationId=city_id,
         generatedAt=now.isoformat(),
-        modelVersion="xgb-1.0",
+        modelVersion="xgb-2.0",
         series=series_points,
         horizons=horizons_out,
-        factors=_make_factors(met_now, delta),
+        factors=_make_factors(factor_inputs, delta),
         insight=insight,
     )
