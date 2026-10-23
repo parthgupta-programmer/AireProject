@@ -27,6 +27,7 @@ How a prediction is made
 
 from __future__ import annotations
 
+import os
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -44,9 +45,15 @@ from pydantic import BaseModel
 try:                                    # run as a package (uvicorn ml_pipeline.serve:app)
     from ml_pipeline.collect_data import calc_aqi
     from ml_pipeline.feature_engineering import build_features
+    from ml_pipeline.auth.database import init_db
+    from ml_pipeline.auth.routes_auth import router as auth_router
+    from ml_pipeline.auth.routes_user import router as user_router
 except ImportError:                     # run from inside ml_pipeline/
     from collect_data import calc_aqi
     from feature_engineering import build_features
+    from auth.database import init_db
+    from auth.routes_auth import router as auth_router
+    from auth.routes_user import router as user_router
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -278,17 +285,31 @@ def _make_factors(row: dict, aqi_trend: float) -> list[PredictionFactor]:
 # ── FastAPI app ────────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="AQI Prediction API",
-    description="XGBoost model serving predicted India AQI for the Aire app.",
-    version="2.0.0",
+    title="Aire API",
+    description="Backend API serving predicted India AQI, secure authentication, and persistent user data.",
+    version="3.0.0",
 )
+
+raw_origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000",
+)
+allowed_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # Restrict in production
-    allow_methods=["GET"],
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize database tables on startup
+init_db()
+
+# Mount auth and user routers
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(user_router, prefix="/user", tags=["user"])
 
 
 @app.get("/health")

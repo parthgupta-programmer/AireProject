@@ -42,7 +42,7 @@ function Field({ label, error, id, children }: { label: string; error?: string; 
 }
 
 export default function AuthPage({ mode }: { mode: Mode }) {
-  const { user, logIn, signUp } = useAuth()
+  const { user, initialising, logIn, signUp } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const from = (location.state as { from?: string } | null)?.from ?? '/'
@@ -55,7 +55,9 @@ export default function AuthPage({ mode }: { mode: Mode }) {
   const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  if (user && !busy) return <Navigate to={from} replace />
+  // Wait for session initialisation before redirecting; avoids a flash-redirect on first load.
+  if (!initialising && user && !busy) return <Navigate to={from} replace />
+
 
   const set = (key: keyof typeof values) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setValues((v) => ({ ...v, [key]: e.target.value }))

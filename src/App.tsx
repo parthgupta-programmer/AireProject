@@ -22,8 +22,15 @@ const LandingPage = lazy(() => import('@/pages/LandingPage'))
 
 /** Logged in: the app. Logged out: the landing page at "/", and the login page for every other app address. */
 function AppGate() {
-  const { user } = useAuth()
+  const { user, initialising } = useAuth()
   const location = useLocation()
+
+  // While the backend session check is running, show a neutral screen to avoid
+  // a spurious redirect-to-login that would reset the user's intended location.
+  if (initialising) {
+    return <div className="min-h-dvh bg-background" aria-hidden aria-label="Loading session…" />
+  }
+
   if (user) return <AppLayout />
   if (location.pathname === '/') {
     return (

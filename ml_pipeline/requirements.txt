@@ -11,13 +11,18 @@ numpy>=1.26.0
 requests>=2.31.0
 pytz>=2024.1
 
-# ── Serving (FastAPI backend) ─────────────────────────────────────────────────
+# ── Serving & Auth (FastAPI backend) ──────────────────────────────────────────
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.7.0
+sqlalchemy>=2.0.0
+bcrypt>=4.0.0
+pyjwt>=2.8.0
+httpx>=0.27.0
 
 # ── Persistence ───────────────────────────────────────────────────────────────
 joblib>=1.4.0              # Save / load model artefacts
 
 # ── Evaluation & logging ──────────────────────────────────────────────────────
 matplotlib>=3.8.0          # Plots saved as PNG artefacts
+

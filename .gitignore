@@ -10,8 +10,11 @@ ml_pipeline/data/combined.csv
 ml_pipeline/data/features.csv
 ml_pipeline/models/plots/
 
-# Python
+# Python & SQLite
 __pycache__/
 *.py[cod]
 .venv/
 *.egg-info/
+*.db
+*.sqlite
+*.sqlite3
