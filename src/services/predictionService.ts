@@ -17,14 +17,21 @@ import type { AqiPrediction } from '@/types/prediction'
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 
+export class PredictionServiceError extends Error {
+  constructor(message: string, public readonly cause?: unknown) {
+    super(message)
+    this.name = 'PredictionServiceError'
+  }
+}
+
 /**
  * URL of the FastAPI prediction server started with:
  *   uvicorn ml_pipeline.serve:app --reload --port 8000
  *
- * Leave empty (or unset VITE_ML_BACKEND_URL) to use the built-in mock.
+ * In production with no backend configured, returns null to show honest unavailable state.
  */
 const BACKEND_URL: string =
-  (import.meta.env.VITE_ML_BACKEND_URL as string | undefined) ?? ''
+  (import.meta.env.VITE_ML_BACKEND_URL as string | undefined)?.trim() ?? ''
 
 const USE_REAL_BACKEND = BACKEND_URL.length > 0
 
@@ -35,23 +42,33 @@ async function fetchFromBackend(
 ): Promise<AqiPrediction | null> {
   const url = `${BACKEND_URL.replace(/\/$/, '')}/predict/${locationId}`
 
-  const resp = await fetch(url, {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(10_000), // 10 s timeout
-  })
+  try {
+    const resp = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000), // 10 s timeout
+    })
 
-  if (resp.status === 404) {
-    // City not in model registry → no prediction available
-    return null
-  }
+    if (resp.status === 404) {
+      // City not in model registry → no prediction available
+      return null
+    }
 
-  if (!resp.ok) {
-    throw new Error(
-      `ML backend returned ${resp.status} for city "${locationId}"`,
+    if (!resp.ok) {
+      throw new PredictionServiceError(
+        `ML backend returned HTTP ${resp.status} for city "${locationId}"`,
+      )
+    }
+
+    return (await resp.json()) as AqiPrediction
+  } catch (err) {
+    if (err instanceof PredictionServiceError) {
+      throw err
+    }
+    throw new PredictionServiceError(
+      `Failed to connect to ML backend at ${BACKEND_URL}: ${err instanceof Error ? err.message : String(err)}`,
+      err,
     )
   }
-
-  return (await resp.json()) as AqiPrediction
 }
 
 // ── Mock fallback (preserved from original) ────────────────────────────────────
@@ -156,26 +173,36 @@ async function getMockPrediction(
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
+const IS_EXPLICIT_MOCK =
+  Boolean(FLAG) ||
+  (import.meta.env.VITE_USE_MOCK_AQI as string | undefined)?.toLowerCase() ===
+    'true'
+
 /**
  * Returns the AQI prediction for a given location.
  *
  * • When VITE_ML_BACKEND_URL is set, calls the real FastAPI server.
- * • Falls back to the mock on any network/server error so the UI never breaks.
+ *   Network or server errors propagate to produce an honest error state with retry.
+ * • When explicit mock mode is requested (FLAG or VITE_USE_MOCK_AQI=true), serves mock predictions.
+ * • In local development (DEV) with no backend configured, serves mock predictions to assist UI development.
+ * • In production with no backend configured, returns null to show honest unavailable state.
  */
 export async function getPrediction(
   locationId: string,
 ): Promise<AqiPrediction | null> {
-  if (USE_REAL_BACKEND) {
-    try {
-      return await fetchFromBackend(locationId)
-    } catch (err) {
-      console.warn(
-        '[predictionService] Real backend failed, falling back to mock:',
-        err,
-      )
-      // Fall through to mock
-    }
+  if (IS_EXPLICIT_MOCK) {
+    return getMockPrediction(locationId)
   }
 
-  return getMockPrediction(locationId)
+  if (USE_REAL_BACKEND) {
+    return await fetchFromBackend(locationId)
+  }
+
+  // Local development without a configured ML server
+  if (import.meta.env.DEV) {
+    return getMockPrediction(locationId)
+  }
+
+  // Production without ML backend configured
+  return null
 }

@@ -28,6 +28,7 @@ import time
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import requests
@@ -39,9 +40,9 @@ import requests
 OPENAQ_API_KEY: str = os.getenv("OPENAQ_API_KEY", "")
 
 # How many days of past data to download. More history = more seasons seen in
-# training = noticeably better accuracy (2 years covers two full smog seasons).
+# training = noticeably better accuracy (1 year covers all seasons).
 # NOTE: existing files in data/raw/ are skipped - delete them to re-download.
-DAYS_BACK: int = 730
+DAYS_BACK: int = 365
 
 # Cities to train on — must match IDs in src/data/indiaLocations.ts
 # Format: (city_id, display_name, latitude, longitude)
@@ -93,6 +94,8 @@ def _openaq_headers() -> dict:
 
 def find_openaq_location(city_name: str, lat: float, lon: float, radius_m: int = 25_000) -> Optional[int]:
     """Return the first OpenAQ location ID near (lat, lon)."""
+    if not OPENAQ_API_KEY or OPENAQ_API_KEY == "YOUR_OPENAQ_API_KEY_HERE":
+        return None
     try:
         resp = requests.get(
             f"{OPENAQ_BASE}/locations",
