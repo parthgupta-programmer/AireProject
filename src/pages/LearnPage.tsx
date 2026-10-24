@@ -1,4 +1,4 @@
-import { Wind } from 'lucide-react'
+﻿import { AlertTriangle, CheckCircle2, Wind } from 'lucide-react'
 
 import { useAirQualityData } from '@/context/AirQualityContext'
 import { useSelectedLocation } from '@/context/LocationContext'
@@ -11,10 +11,13 @@ import {
 
 import {
   AQI_MEANING,
+  AQI_VS_CONCENTRATION,
   CLEAN_AIR,
+  DATA_SOURCE_CARDS,
   FAQ,
   POLLUTANT_LESSONS,
   SOURCES,
+  WEATHER_FACTORS,
 } from '@/lib/learnContent'
 
 import {
@@ -423,7 +426,114 @@ function AqiScale() {
   )
 }
 
-// ---- 5. FAQ -------------------------------------------------------------------
+// ---- 5. AQI vs Concentration --------------------------------------------------
+
+function AqiVsConcentration() {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      {AQI_VS_CONCENTRATION.map((card) => (
+        <Card key={card.title}>
+          <CardContent className="space-y-2 text-sm">
+            <h3 className="font-semibold">{card.title}</h3>
+            <p>{card.body}</p>
+            <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+              {card.detail}
+            </p>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
+// ---- 6. Weather & Atmospheric Influence ----------------------------------------
+
+function WeatherInfluence() {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {WEATHER_FACTORS.map((f) => (
+        <Card key={f.title}>
+          <CardContent className="space-y-2 text-sm">
+            <div className="flex items-center gap-2">
+              <span aria-hidden className="text-xl">{f.icon}</span>
+              <h3 className="font-semibold">{f.title}</h3>
+            </div>
+            <p>{f.body}</p>
+            <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">Tip: </span>
+              {f.tip}
+            </p>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
+// ---- 7. Data Sources & Forecast Limitations ------------------------------------
+
+const SOURCE_TYPE_COLORS: Record<string, string> = {
+  observed: 'bg-aqi-good',
+  forecast: 'bg-aqi-moderate',
+  route: 'bg-primary',
+}
+
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+  observed: 'Observed',
+  forecast: 'Forecast',
+  route: 'Route estimate',
+}
+
+function DataSources() {
+  return (
+    <div className="grid gap-4 lg:grid-cols-3">
+      {DATA_SOURCE_CARDS.map((card) => (
+        <Card key={card.title}>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex items-center gap-2">
+              <span
+                aria-hidden
+                className={cn(
+                  'size-2.5 rounded-full',
+                  SOURCE_TYPE_COLORS[card.type],
+                )}
+              />
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {SOURCE_TYPE_LABELS[card.type]}
+              </span>
+            </div>
+            <h3 className="font-semibold">{card.title}</h3>
+            <p className="text-muted-foreground">{card.description}</p>
+            <div>
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Strengths</p>
+              <ul className="space-y-1">
+                {card.strengths.map((s) => (
+                  <li key={s} className="flex items-start gap-1.5">
+                    <CheckCircle2 aria-hidden className="mt-0.5 size-3.5 shrink-0 text-aqi-good" />
+                    <span>{s}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Limitations</p>
+              <ul className="space-y-1">
+                {card.limitations.map((l) => (
+                  <li key={l} className="flex items-start gap-1.5">
+                    <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0 text-aqi-veryPoor" />
+                    <span>{l}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
+// ---- 8. FAQ -------------------------------------------------------------------
 
 function Faq() {
   return (
@@ -489,6 +599,27 @@ export default function LearnPage() {
       <SectionTitle title="Common questions" />
 
       <Faq />
+
+      <SectionTitle
+        title="AQI vs pollutant concentration"
+        subtitle="Why a raw µg/m³ reading and a 0–500 index number are not the same thing."
+      />
+
+      <AqiVsConcentration />
+
+      <SectionTitle
+        title="How weather shapes air quality"
+        subtitle="Atmospheric conditions often matter as much as how much pollution is produced."
+      />
+
+      <WeatherInfluence />
+
+      <SectionTitle
+        title="Observations, forecasts and route estimates"
+        subtitle="Understanding the difference is essential for interpreting what you see in this app."
+      />
+
+      <DataSources />
 
       <p className="mt-8 flex items-start gap-2 text-xs text-muted-foreground">
         <Wind

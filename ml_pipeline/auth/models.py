@@ -16,6 +16,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Integer,
     String,
     Text,
 )
@@ -45,6 +46,16 @@ class User(Base):
         uselist=False,
         cascade="all, delete-orphan",
         lazy="joined",
+    )
+    alert_rules = relationship(
+        "AlertRule",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    alert_events = relationship(
+        "AlertEvent",
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
 
 
@@ -114,3 +125,51 @@ class RevokedToken(Base):
     user_id = Column(String(36), index=True, nullable=False)
     revoked_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class AlertRule(Base):
+    __tablename__ = "alert_rules"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    location_id = Column(String(50), nullable=False, default="delhi")
+    location_name = Column(String(100), nullable=False, default="Delhi")
+    condition_type = Column(String(30), nullable=False, default="above_threshold")  # above_threshold | category_reach | below_threshold_improvement
+    threshold_value = Column(Integer, nullable=False, default=200)
+    severity_category = Column(String(30), nullable=True)  # moderate | poor | veryPoor | severe
+    enabled = Column(Boolean, nullable=False, default=True)
+    channel_in_app = Column(Boolean, nullable=False, default=True)
+    channel_browser = Column(Boolean, nullable=False, default=True)
+    last_evaluated_at = Column(DateTime(timezone=True), nullable=True)
+    last_triggered_at = Column(DateTime(timezone=True), nullable=True)
+    last_seen_aqi = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False)
+
+    user = relationship("User", back_populates="alert_rules")
+    events = relationship("AlertEvent", back_populates="rule", cascade="all, delete-orphan")
+
+
+class AlertEvent(Base):
+    __tablename__ = "alert_events"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    rule_id = Column(String(36), ForeignKey("alert_rules.id", ondelete="SET NULL"), nullable=True, index=True)
+    location_id = Column(String(50), nullable=False)
+    location_name = Column(String(100), nullable=False)
+    aqi = Column(Integer, nullable=False)
+    category = Column(String(30), nullable=False)
+    condition_type = Column(String(30), nullable=False)
+    threshold_value = Column(Integer, nullable=False)
+    message = Column(Text, nullable=False)
+    observation_timestamp = Column(DateTime(timezone=True), nullable=False)
+    evaluated_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    is_read = Column(Boolean, nullable=False, default=False)
+    is_dismissed = Column(Boolean, nullable=False, default=False)
+    idempotency_key = Column(String(128), unique=True, index=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+    user = relationship("User", back_populates="alert_events")
+    rule = relationship("AlertRule", back_populates="events")
+

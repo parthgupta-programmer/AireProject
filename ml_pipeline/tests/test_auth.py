@@ -52,10 +52,12 @@ class TestAuthAndUserPersistence(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         Base.metadata.create_all(bind=test_engine)
+        app.dependency_overrides[get_db] = override_get_db
         cls.client = TestClient(app)
 
     @classmethod
     def tearDownClass(cls):
+        app.dependency_overrides.pop(get_db, None)
         Base.metadata.drop_all(bind=test_engine)
         if os.path.exists(test_db_path):
             try:
@@ -64,6 +66,7 @@ class TestAuthAndUserPersistence(unittest.TestCase):
                 pass
 
     def setUp(self):
+        app.dependency_overrides[get_db] = override_get_db
         # Clear tables between tests
         db = TestSessionLocal()
         db.query(RevokedToken).delete()

@@ -48,12 +48,14 @@ try:                                    # run as a package (uvicorn ml_pipeline.
     from ml_pipeline.auth.database import init_db
     from ml_pipeline.auth.routes_auth import router as auth_router
     from ml_pipeline.auth.routes_user import router as user_router
+    from ml_pipeline.auth.routes_alerts import router as alerts_router
 except ImportError:                     # run from inside ml_pipeline/
     from collect_data import calc_aqi
     from feature_engineering import build_features
     from auth.database import init_db
     from auth.routes_auth import router as auth_router
     from auth.routes_user import router as user_router
+    from auth.routes_alerts import router as alerts_router
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -307,9 +309,10 @@ app.add_middleware(
 # Initialize database tables on startup
 init_db()
 
-# Mount auth and user routers
+# Mount auth, user, and alert routers
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(user_router, prefix="/user", tags=["user"])
+app.include_router(alerts_router, prefix="/alerts", tags=["alerts"])
 
 
 @app.get("/health")

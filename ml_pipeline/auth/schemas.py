@@ -75,3 +75,76 @@ class TokenResponse(BaseModel):
 class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str = Field(..., min_length=8, max_length=128)
+
+
+# ── Alert Rules & Events Schemas (Phase 5) ────────────────────────────────────
+
+class AlertRuleCreateRequest(BaseModel):
+    location_id: str = Field(..., min_length=1, max_length=50)
+    location_name: str = Field(..., min_length=1, max_length=100)
+    condition_type: str = Field("above_threshold", pattern="^(above_threshold|category_reach|below_threshold_improvement)$")
+    threshold_value: int = Field(200, ge=0, le=500, description="CPCB NAQI threshold between 0 and 500")
+    severity_category: Optional[str] = Field(None, pattern="^(good|moderate|poor|veryPoor|severe)$")
+    enabled: bool = True
+    channel_in_app: bool = True
+    channel_browser: bool = True
+
+
+class AlertRuleUpdateRequest(BaseModel):
+    location_id: Optional[str] = Field(None, min_length=1, max_length=50)
+    location_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    condition_type: Optional[str] = Field(None, pattern="^(above_threshold|category_reach|below_threshold_improvement)$")
+    threshold_value: Optional[int] = Field(None, ge=0, le=500)
+    severity_category: Optional[str] = Field(None, pattern="^(good|moderate|poor|veryPoor|severe)$")
+    enabled: Optional[bool] = None
+    channel_in_app: Optional[bool] = None
+    channel_browser: Optional[bool] = None
+
+
+class AlertRuleResponse(BaseModel):
+    id: str
+    user_id: str
+    location_id: str
+    location_name: str
+    condition_type: str
+    threshold_value: int
+    severity_category: Optional[str] = None
+    enabled: bool
+    channel_in_app: bool
+    channel_browser: bool
+    last_evaluated_at: Optional[datetime] = None
+    last_triggered_at: Optional[datetime] = None
+    last_seen_aqi: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AlertEventResponse(BaseModel):
+    id: str
+    user_id: str
+    rule_id: Optional[str] = None
+    location_id: str
+    location_name: str
+    aqi: int
+    category: str
+    condition_type: str
+    threshold_value: int
+    message: str
+    observation_timestamp: datetime
+    evaluated_at: datetime
+    is_read: bool
+    is_dismissed: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AlertEvaluationRequest(BaseModel):
+    location_id: str
+    location_name: str
+    current_aqi: int = Field(..., ge=0, le=500)
+    category: str
+    observation_timestamp: datetime
+
