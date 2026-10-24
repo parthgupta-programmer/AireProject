@@ -28,9 +28,9 @@ import type {
 
 const OPENMETEO_AQ_ENDPOINT = 'https://air-quality-api.open-meteo.com/v1/air-quality'
 const REQUEST_TIMEOUT_MS = 10_000
-const CURRENT_CACHE_TTL_MS = 5 * 60_000 // 5 minutes
-const NATIONAL_CACHE_TTL_MS = 5 * 60_000 // 5 minutes
-const HISTORY_CACHE_TTL_MS = 10 * 60_000 // 10 minutes
+const CURRENT_CACHE_TTL_MS = 2 * 60_000 // 2 minutes
+const NATIONAL_CACHE_TTL_MS = 2 * 60_000 // 2 minutes
+const HISTORY_CACHE_TTL_MS = 3 * 60_000 // 3 minutes
 
 // ── In-Memory Cache Structures ───────────────────────────────────────────────
 
@@ -215,6 +215,7 @@ export async function fetchCurrentAirQuality(
     location,
     aqi: aqiResult.aqi,
     timestamp: parseIsoTimestamp(raw.current.time),
+    fetchedAt: new Date(now).toISOString(),
     pollutants,
     previousAqi,
   }

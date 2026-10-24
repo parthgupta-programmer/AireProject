@@ -35,10 +35,14 @@ export interface AirQualityData {
   aqi: number
 
   /**
-   * ISO 8601 time of the measurement
-   * (not the time it was fetched).
+   * ISO 8601 time of the atmospheric measurement from the provider.
    */
   timestamp: string
+
+  /**
+   * ISO 8601 time when the client fetched/synced the reading.
+   */
+  fetchedAt?: string
 
   pollutants: PollutantReadings
 

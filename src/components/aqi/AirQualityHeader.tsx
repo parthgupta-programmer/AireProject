@@ -19,7 +19,7 @@ export function AirQualityHeader({ title }: { title: string }) {
           {status === 'error' ? (
             <p className="mt-0.5 text-sm text-muted-foreground">Not updated</p>
           ) : (
-            <LastUpdated timestamp={data?.timestamp} isRefreshing={isRefreshing} />
+            <LastUpdated timestamp={data?.timestamp} fetchedAt={data?.fetchedAt} isRefreshing={isRefreshing} />
           )}
         </div>
         {location && <RefreshButton onClick={status === 'error' ? retry : refresh} isRefreshing={isRefreshing || status === 'loading'} />}

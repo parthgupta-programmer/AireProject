@@ -212,7 +212,10 @@ export async function getNationalAirQuality(): Promise<CityAqi[]> {
 /**
  * Current air quality reading for a single location.
  */
-export async function getCurrentAirQuality(locationId: string): Promise<AirQualityData> {
+export async function getCurrentAirQuality(
+  locationId: string,
+  bypassCache = false,
+): Promise<AirQualityData> {
   const loc = findLocation(locationId)
   if (!loc) {
     throw new AirQualityServiceError(`Unknown location id: "${locationId}"`)
@@ -226,13 +229,14 @@ export async function getCurrentAirQuality(locationId: string): Promise<AirQuali
       location: stripMock(loc),
       aqi,
       timestamp: new Date(t).toISOString(),
+      fetchedAt: new Date().toISOString(),
       pollutants: mockPollutantsAt(loc, aqi, t),
       previousAqi: mockAqiAt(loc, t - MEASURE_EVERY_MS),
     }
   }
 
   try {
-    return await fetchCurrentAirQuality(stripMock(loc))
+    return await fetchCurrentAirQuality(stripMock(loc), bypassCache)
   } catch (err) {
     throw new AirQualityServiceError(
       `Failed to fetch air quality for ${loc.name}: ${err instanceof Error ? err.message : String(err)}`,

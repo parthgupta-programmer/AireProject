@@ -36,7 +36,7 @@ export function useAirQuality(locationId: string | null) {
       const id = ++requestId.current // only the newest request may update state
       setState((s) => (mode === 'initial' ? INITIAL : { ...s, isRefreshing: true }))
       try {
-        const data = await getCurrentAirQuality(locationId)
+        const data = await getCurrentAirQuality(locationId, mode === 'refresh')
         if (id !== requestId.current) return
         setState({ status: 'success', data, isRefreshing: false, refreshFailed: false })
       } catch {
